@@ -1,236 +1,155 @@
 <?php
+
+// --- 
+// POINT D'ENTRÉE : index.php
+// C'est ici que tout commence. Ce fichier reçoit toutes les requêtes 
+// et redirige l'utilisateur vers le bon contrôleur.
+// ---
+
+// On démarre la session au tout début pour gérer les connexions
 session_start();
 
-require_once "app/models/User.php";
-require_once "app/models/Challenge.php";
+// On définit le chemin racine pour éviter les erreurs d'inclusion
+define('ROOT_PATH', __DIR__);
 
-$action = $_GET['action'] ?? null;
+// Importation de la config et de la base de données
+require_once ROOT_PATH . '/config/config.php';
+require_once ROOT_PATH . '/config/database.php';
 
-/* ================= REGISTER ================= */
-if ($action == "register" && $_SERVER["REQUEST_METHOD"] == "POST") {
+// On charge tous nos contrôleurs ici
+require_once ROOT_PATH . '/app/controllers/Controller.php';
+require_once ROOT_PATH . '/app/controllers/HomeController.php';
+require_once ROOT_PATH . '/app/controllers/AuthController.php';
+require_once ROOT_PATH . '/app/controllers/UserController.php';
+require_once ROOT_PATH . '/app/controllers/ChallengeController.php';
+require_once ROOT_PATH . '/app/controllers/SubmissionController.php';
 
-    $user = new User();
-    $result = $user->register($_POST['name'], $_POST['email'], $_POST['password']);
+// Création des objets pour chaque contrôleur
+$authCtrl       = new AuthController();
+$userCtrl       = new UserController();
+$challengeCtrl  = new ChallengeController();
+$submissionCtrl = new SubmissionController();
+$homeCtrl       = new HomeController();
 
-    if ($result === "email_exists") {
-        echo "❌ Email déjà utilisé";
-    } elseif ($result === true) {
-        echo "✅ Inscription réussie";
-    } else {
-        echo "❌ Erreur serveur";
-    }
-    exit;
+// On récupère la page demandée (si rien, on affiche l'accueil)
+$page = $_GET['page'] ?? 'home';
+
+// NOTRE ROUTEUR : Un simple switch pour charger la bonne méthode
+switch ($page) {
+    
+    // --- ACCUEIL ---
+    case 'home':
+        $homeCtrl->index();
+        break;
+
+    // --- AUTHENTIFICATION ---
+    case 'login':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $authCtrl->login(); // Traitement du formulaire
+        } else {
+            $authCtrl->showLogin(); // Affichage du formulaire
+        }
+        break;
+
+    case 'register':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $authCtrl->register();
+        } else {
+            $authCtrl->showRegister();
+        }
+        break;
+
+    case 'logout':
+        $authCtrl->logout();
+        break;
+
+    // --- DÉFIS (CHALLENGES) ---
+    case 'challenges':
+        $challengeCtrl->index();
+        break;
+
+    case 'challenge-show':
+        $challengeCtrl->show();
+        break;
+
+    case 'challenge-create':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $challengeCtrl->create();
+        } else {
+            $challengeCtrl->showCreate();
+        }
+        break;
+
+    case 'challenge-edit':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $challengeCtrl->update();
+        } else {
+            $challengeCtrl->showEdit();
+        }
+        break;
+
+    case 'challenge-delete':
+        $challengeCtrl->delete();
+        break;
+
+    // --- PARTICIPATIONS (SUBMISSIONS) ---
+    case 'submission-show':
+        $submissionCtrl->show();
+        break;
+
+    case 'submission-create':
+        $submissionCtrl->create();
+        break;
+
+    case 'submission-edit':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $submissionCtrl->update();
+        } else {
+            $submissionCtrl->showEdit();
+        }
+        break;
+
+    case 'submission-delete':
+        $submissionCtrl->delete();
+        break;
+
+    case 'leaderboard':
+        $submissionCtrl->leaderboard();
+        break;
+
+    // --- ACTIONS AJAX (VOTES / COMMENTAIRES) ---
+    case 'vote':
+        $submissionCtrl->vote();
+        break;
+
+    case 'add-comment':
+        $submissionCtrl->addComment();
+        break;
+
+    // --- UTILISATEUR / PROFIL ---
+    case 'profile':
+        $userCtrl->showProfile();
+        break;
+
+    case 'edit-profile':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $userCtrl->updateProfile();
+        } else {
+            $userCtrl->showEditProfile();
+        }
+        break;
+
+    case 'delete-account':
+        $userCtrl->deleteAccount();
+        break;
+
+    // --- ERREUR 404 ---
+    default:
+        http_response_code(404);
+        echo "<div style='text-align:center; padding:50px; font-family:sans-serif;'>
+                <h1>404 - Page non trouvée</h1>
+                <p>La page que vous recherchez n'existe pas.</p>
+                <p><a href='index.php'>Retour à l'accueil</a></p>
+              </div>";
+        break;
 }
-
-/* ================= LOGIN ================= */
-if ($action == "login" && $_SERVER["REQUEST_METHOD"] == "POST") {
-
-    $user = new User();
-    $result = $user->login($_POST['email'], $_POST['password']);
-
-    if ($result) {
-        $_SESSION['user'] = $result;
-        header("Location: index.php?action=dashboard");
-        exit;
-    } else {
-        echo "❌ Email ou mot de passe incorrect";
-        exit;
-    }
-}
-
-if ($action == "login") {
-    include "app/views/login.php";
-    exit;
-}
-
-/* ================= DASHBOARD ================= */
-if ($action == "dashboard") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    include "app/views/dashboard.php";
-    exit;
-}
-
-/* ================= CREATE CHALLENGE PAGE ================= */
-if ($action == "create_challenge") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    include "app/views/challenges/create_challenge.php";
-    exit;
-}
-
-/* ================= STORE CHALLENGE ================= */
-if ($action == "store_challenge" && $_SERVER["REQUEST_METHOD"] == "POST") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    $challenge = new Challenge();
-
-    $result = $challenge->create(
-        $_SESSION['user']['id'],
-        $_POST['title'],
-        $_POST['description'],
-        $_POST['category'],
-        $_POST['deadline'],
-        $_POST['image'] ?? null
-    );
-
-    header("Location: index.php?action=list_challenges");
-    exit;
-}
-
-/* ================= LIST CHALLENGES ================= */
-if ($action == "list_challenges") {
-
-    $challengeModel = new Challenge();
-    $challenges = $challengeModel->getAll();
-
-    include "app/views/challenges/list.php";
-    exit;
-}
-
-/* ================= EDIT CHALLENGE ================= */
-if ($action == "edit_challenge") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    if (!isset($_GET['id'])) {
-        die("ID manquant");
-    }
-
-    $challengeModel = new Challenge();
-    $challenge = $challengeModel->getById($_GET['id']);
-
-    if (!$challenge || $challenge['user_id'] != $_SESSION['user']['id']) {
-        die("Accès refusé");
-    }
-
-    include "app/views/challenges/edit.php";
-    exit;
-}
-
-/* ================= UPDATE CHALLENGE ================= */
-if ($action == "update_challenge" && $_SERVER["REQUEST_METHOD"] == "POST") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    $challengeModel = new Challenge();
-
-    $challengeModel->update(
-        $_POST['id'],
-        $_SESSION['user']['id'],
-        $_POST['title'],
-        $_POST['description'],
-        $_POST['category'],
-        $_POST['deadline'],
-        $_POST['image']
-    );
-
-    header("Location: index.php?action=list_challenges");
-    exit;
-}
-
-/* ================= DELETE CHALLENGE ================= */
-if ($action == "delete_challenge") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    if (!isset($_GET['id'])) {
-        die("ID manquant");
-    }
-
-    $challengeModel = new Challenge();
-    $challengeModel->delete($_GET['id'], $_SESSION['user']['id']);
-
-    header("Location: index.php?action=list_challenges");
-    exit;
-}
-
-/* ================= EDIT PROFILE ================= */
-if ($action == "edit_profile") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    include "app/views/edit_profile.php";
-    exit;
-}
-
-/* ================= UPDATE PROFILE ================= */
-if ($action == "update_profile" && $_SERVER["REQUEST_METHOD"] == "POST") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    $user = new User();
-    $user->updateProfile(
-        $_SESSION['user']['id'],
-        $_POST['name'],
-        $_POST['email']
-    );
-
-    $_SESSION['user']['name']  = $_POST['name'];
-    $_SESSION['user']['email'] = $_POST['email'];
-
-    header("Location: index.php?action=edit_profile&profile_success=1");
-    exit;
-}
-
-/* ================= CHANGE PASSWORD ================= */
-if ($action == "change_password" && $_SERVER["REQUEST_METHOD"] == "POST") {
-
-    if (!isset($_SESSION['user'])) {
-        header("Location: index.php?action=login");
-        exit;
-    }
-
-    $user = new User();
-
-    $result = $user->changePassword(
-        $_SESSION['user']['id'],
-        $_POST['old_password'],
-        $_POST['new_password']
-    );
-
-    if ($result === true) {
-        header("Location: index.php?action=edit_profile&pwd_success=1");
-    } else {
-        header("Location: index.php?action=edit_profile&pwd_error=1");
-    }
-    exit;
-}
-
-/* ================= LOGOUT ================= */
-if ($action == "logout") {
-    session_destroy();
-    header("Location: index.php?action=login");
-    exit;
-}
-
-/* ================= DEFAULT ================= */
-include "app/views/register.php";
-exit;

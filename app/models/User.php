@@ -1,112 +1,113 @@
 <?php
-require_once __DIR__ . "/../../config/Database.php";
 
-class User {
+require_once __DIR__ . '/Model.php';
 
-    private $conn;
-    private $table = "users";
+// MODÈLE USER
+// On gère les comptes des utilisateurs
+class User extends Model {
 
-    public function __construct() {
-        $database = new Database();
-        $this->conn = $database->connect();
+    // Création d'un compte (Inscription)
+    public function create($data) {
+        // On hache le mot de passe pour la sécurité
+        $hashed = password_hash($data['password'], PASSWORD_DEFAULT);
+
+        $sql = "INSERT INTO users (username, email, password, avatar, bio, created_at)
+                VALUES (?, ?, ?, ?, ?, NOW())";
+        
+        $params = [
+            $data['username'],
+            $data['email'],
+            $hashed,
+            $data['avatar']  ?? null,
+            $data['bio']     ?? null,
+        ];
+
+        $this->query($sql, $params);
+
+        return $this->lastInsertId();
     }
 
-    // REGISTER
-    public function register($name, $email, $password) {
-
-        $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-
-        $sql = "INSERT INTO " . $this->table . " (name, email, password) 
-                VALUES (:name, :email, :password)";
-
-        $stmt = $this->conn->prepare($sql);
-
-        try {
-            $stmt->execute([
-                ':name' => htmlspecialchars($name),
-                ':email' => htmlspecialchars($email),
-                ':password' => $hashedPassword
-            ]);
-            return true;
-
-        } catch (PDOException $e) {
-            if ($e->getCode() == 23000) {
-                return "email_exists";
-            }
-            return false;
-        }
+    // Trouver un membre avec son ID
+    public function findById($id) {
+        $stmt = $this->query("SELECT * FROM users WHERE id = ?", [$id]);
+        return $stmt->fetch();
     }
 
-    // LOGIN
-    public function login($email, $password) {
+    /**
+     * Récupère tous les utilisateurs (utile pour les statistiques)
+     */
+    public function getAll() {
+        return $this->query("SELECT * FROM users")->fetchAll();
+    }
 
-        $sql = "SELECT * FROM " . $this->table . " WHERE email = :email LIMIT 1";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([':email' => $email]);
+    /**
+     * Trouve un utilisateur par son email (utile pour la connexion)
+     */
+    public function findByEmail($email) {
+        $stmt = $this->query("SELECT * FROM users WHERE email = ?", [$email]);
+        return $stmt->fetch();
+    }
 
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
+    // Pour vérifier si l'email et le mot de passe sont corrects
+    public function authenticate($email, $password) {
+        $user = $this->findByEmail($email);
+        
+        // On vérifie si l'utilisateur existe ET si le mot de passe correspond au hachage
         if ($user && password_verify($password, $user['password'])) {
             return $user;
         }
-
+        
         return false;
     }
 
-    // GET USER BY ID
-    public function getUserById($id) {
-        $sql = "SELECT * FROM " . $this->table . " WHERE id = :id LIMIT 1";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([':id' => $id]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+    // On récupère les chiffres de l'user (combien de défis, participations...)
+    public function getStats($userId) {
+        $challenges    = $this->query("SELECT COUNT(*) FROM challenges WHERE user_id = ?", [$userId])->fetchColumn();
+        $submissions   = $this->query("SELECT COUNT(*) FROM submissions WHERE user_id = ?", [$userId])->fetchColumn();
+        $votesReceived = $this->query(
+            "SELECT COUNT(*) FROM votes v
+             JOIN submissions s ON v.submission_id = s.id
+             WHERE s.user_id = ?",
+            [$userId]
+        )->fetchColumn();
+
+        return [
+            'challenges'     => (int) $challenges,
+            'submissions'    => (int) $submissions,
+            'votes_received' => (int) $votesReceived,
+        ];
     }
 
-    // UPDATE PROFILE
-    public function updateProfile($id, $name, $email) {
+    /**
+     * Met à jour les informations du profil
+     */
+    public function update($id, $data) {
+        $fields = [];
+        $params = [];
 
-        $sql = "UPDATE " . $this->table . " 
-                SET name = :name, email = :email 
-                WHERE id = :id";
-
-        $stmt = $this->conn->prepare($sql);
-
-        return $stmt->execute([
-            ':name' => htmlspecialchars($name),
-            ':email' => htmlspecialchars($email),
-            ':id' => $id
-        ]);
-    }
-
-    // CHANGE PASSWORD (WITH OLD PASSWORD CHECK)
-    public function changePassword($id, $oldPassword, $newPassword) {
-
-        $user = $this->getUserById($id);
-
-        if (!$user || !password_verify($oldPassword, $user['password'])) {
-            return "wrong_old_password";
+        // On construit la requête dynamiquement selon les champs remplis
+        if (!empty($data['username'])) { $fields[] = 'username = ?'; $params[] = $data['username']; }
+        if (!empty($data['email']))    { $fields[] = 'email = ?';    $params[] = $data['email'];    }
+        if (!empty($data['bio']))      { $fields[] = 'bio = ?';      $params[] = $data['bio'];      }
+        if (!empty($data['avatar']))   { $fields[] = 'avatar = ?';   $params[] = $data['avatar'];   }
+        
+        if (!empty($data['password'])) {
+            $fields[] = 'password = ?';
+            $params[] = password_hash($data['password'], PASSWORD_DEFAULT);
         }
 
-        $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
+        if (empty($fields)) return false;
 
-        $sql = "UPDATE " . $this->table . " 
-                SET password = :password 
-                WHERE id = :id";
-
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([
-            ':password' => $hashed,
-            ':id' => $id
-        ]);
-
-        return true;
+        $params[] = $id;
+        $sql = "UPDATE users SET " . implode(', ', $fields) . " WHERE id = ?";
+        
+        return $this->query($sql, $params)->rowCount() > 0;
     }
 
-    // DELETE ACCOUNT
-    public function deleteAccount($id) {
-
-        $sql = "DELETE FROM " . $this->table . " WHERE id = :id";
-        $stmt = $this->conn->prepare($sql);
-
-        return $stmt->execute([':id' => $id]);
+    /**
+     * Supprime un compte utilisateur
+     */
+    public function delete($id) {
+        return $this->deleteById('users', $id);
     }
 }
